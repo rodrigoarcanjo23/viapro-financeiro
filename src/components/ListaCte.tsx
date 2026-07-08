@@ -7,6 +7,7 @@ interface Cte {
   numero_documento: string;
   cgf_emitente: string;
   razao_social_emitente: string;
+  data_emissao: string; // Novo campo tipado
   valor_total_servico: number;
   base_calculo_icms: number;
   icms_destacado: number;
@@ -19,7 +20,6 @@ export function ListaCte() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Estados para Edição (Modal)
   const [editingCte, setEditingCte] = useState<Cte | null>(null);
   const [editLoading, setEditLoading] = useState(false);
 
@@ -34,6 +34,7 @@ export function ListaCte() {
 
   useEffect(() => {
     buscarCtes();
+    // Escuta ativa para recarregar sem F5
     window.addEventListener('cteSalvo', buscarCtes);
     return () => window.removeEventListener('cteSalvo', buscarCtes);
   }, []);
@@ -55,6 +56,7 @@ export function ListaCte() {
       razao_social_emitente: editingCte.razao_social_emitente,
       chave_acesso: editingCte.chave_acesso,
       numero_documento: editingCte.numero_documento,
+      data_emissao: editingCte.data_emissao, // Editando a data
       cgf_emitente: editingCte.cgf_emitente,
       valor_total_servico: editingCte.valor_total_servico,
       base_calculo_icms: editingCte.base_calculo_icms,
@@ -71,7 +73,6 @@ export function ListaCte() {
     setEditLoading(false);
   };
 
-  // Filtro de Busca Inteligente
   const ctesFiltrados = ctes.filter(cte => {
     const termo = searchTerm.toLowerCase();
     return (
@@ -85,7 +86,12 @@ export function ListaCte() {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
   };
 
-  // Estilização condicional para a Situação
+  const formatarData = (dataStr: string) => {
+    if (!dataStr) return '-';
+    const [ano, mes, dia] = dataStr.split('-');
+    return `${dia}/${mes}/${ano}`;
+  };
+
   const getBadgeStyle = (situacao: string) => {
     if (situacao === 'Autorizado') return { backgroundColor: '#dcfce7', color: '#166534', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' };
     if (situacao === 'Cancelado') return { backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' };
@@ -119,9 +125,9 @@ export function ListaCte() {
               <tr>
                 <th>Nº Doc.</th>
                 <th>Transportadora (Emitente)</th>
+                <th>Emissão</th> {/* Nova Coluna */}
                 <th>Chave de Acesso</th>
                 <th>Valor do Serviço</th>
-                <th>ICMS Destacado</th>
                 <th>Situação</th>
                 <th style={{ textAlign: 'right' }}>Ações</th>
               </tr>
@@ -135,13 +141,13 @@ export function ListaCte() {
                     <br />
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>CGF: {cte.cgf_emitente || 'N/A'}</span>
                   </td>
+                  <td>{formatarData(cte.data_emissao)}</td>
                   <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                     {cte.chave_acesso}
                   </td>
                   <td style={{ color: 'var(--viapro-green)', fontWeight: '700' }}>
                     {formatarMoeda(cte.valor_total_servico)}
                   </td>
-                  <td>{formatarMoeda(cte.icms_destacado)}</td>
                   <td>
                     <span style={getBadgeStyle(cte.situacao)}>{cte.situacao}</span>
                   </td>
@@ -186,6 +192,10 @@ export function ListaCte() {
                   <div className="input-group">
                     <label>Nº Documento Fiscal</label>
                     <input type="text" className="input-field" value={editingCte.numero_documento} onChange={(e) => setEditingCte({...editingCte, numero_documento: e.target.value})} required />
+                  </div>
+                  <div className="input-group">
+                    <label>Data de Emissão</label>
+                    <input type="date" className="input-field" value={editingCte.data_emissao || ''} onChange={(e) => setEditingCte({...editingCte, data_emissao: e.target.value})} required />
                   </div>
                   <div className="input-group">
                     <label>CGF do Emitente</label>

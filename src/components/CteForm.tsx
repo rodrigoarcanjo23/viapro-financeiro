@@ -7,6 +7,7 @@ export function CteForm() {
     numero_documento: '',
     cgf_emitente: '',
     razao_social_emitente: '',
+    data_emissao: '', // Novo campo adicionado
     valor_total_servico: '',
     base_calculo_icms: '',
     icms_destacado: '',
@@ -33,6 +34,7 @@ export function CteForm() {
         numero_documento: formData.numero_documento,
         cgf_emitente: formData.cgf_emitente,
         razao_social_emitente: formData.razao_social_emitente,
+        data_emissao: formData.data_emissao, // Enviando pro banco
         valor_total_servico: parseFloat(formData.valor_total_servico),
         base_calculo_icms: parseFloat(formData.base_calculo_icms) || 0,
         icms_destacado: parseFloat(formData.icms_destacado) || 0,
@@ -47,10 +49,10 @@ export function CteForm() {
       setMessage('Conhecimento de Transporte (CTE) registrado com sucesso!');
       setFormData({
         chave_acesso: '', numero_documento: '', cgf_emitente: '', razao_social_emitente: '',
-        valor_total_servico: '', base_calculo_icms: '', icms_destacado: '', situacao: 'Autorizado'
+        data_emissao: '', valor_total_servico: '', base_calculo_icms: '', icms_destacado: '', situacao: 'Autorizado'
       });
       
-      // Atualiza a lista de CTEs automaticamente
+      // Atualiza a lista de CTEs automaticamente sem precisar de F5
       window.dispatchEvent(new Event('cteSalvo'));
     }
     setLoading(false);
@@ -82,6 +84,10 @@ export function CteForm() {
             <div className="input-group">
               <label>Nº Documento Fiscal</label>
               <input type="text" name="numero_documento" className="input-field" value={formData.numero_documento} onChange={handleChange} required />
+            </div>
+            <div className="input-group">
+              <label>Data de Emissão</label>
+              <input type="date" name="data_emissao" className="input-field" value={formData.data_emissao} onChange={handleChange} required />
             </div>
             <div className="input-group">
               <label>CGF do Emitente</label>
