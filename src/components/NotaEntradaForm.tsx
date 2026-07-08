@@ -12,7 +12,7 @@ export function NotaEntradaForm() {
     cnpj: '', razao_social: '', chave_acesso: '', uf: '',
     data_emissao: '', data_entrada: '', numero_nfe: '',
     cfop: '', valor_nfe: '', protocolo: '',
-    situacao: 'Lançada', observacao: '' // Novos campos adicionados
+    situacao: 'Lançada', observacao: ''
   });
   
   const [itens, setItens] = useState<ItemNota[]>([]);
@@ -55,7 +55,7 @@ export function NotaEntradaForm() {
         data_emissao: formData.data_emissao, data_entrada: formData.data_entrada,
         numero_nfe: formData.numero_nfe, cfop: formData.cfop,
         valor_nfe: valorNfeFloat, protocolo: formData.protocolo,
-        situacao: formData.situacao, observacao: formData.observacao // Inserção dos novos campos
+        situacao: formData.situacao, observacao: formData.observacao
       }])
       .select('id').single();
 
@@ -111,6 +111,9 @@ export function NotaEntradaForm() {
     setItens([]);
     setGerarFaturamento(false);
     setLoading(false);
+    
+    // Dispara eventos para atualizar as listas instantaneamente!
+    window.dispatchEvent(new Event('notaEntradaSalva'));
     window.dispatchEvent(new Event('faturamentoSalvo'));
   };
 
@@ -175,7 +178,6 @@ export function NotaEntradaForm() {
           </div>
         </div>
 
-        {/* NOVOS CAMPOS: Situação e Observação */}
         <div className="form-grid" style={{ marginTop: '1.5rem' }}>
           <div className="form-column" style={{ gridColumn: 'span 1' }}>
             <div className="input-group">
@@ -227,7 +229,8 @@ export function NotaEntradaForm() {
             </div>
             <div className="input-group">
               <label>Valor (R$)</label>
-              <input type="number" step="0.01" className="input-field" value={item.valor_produto} onChange={(e) => handleItemChange(index, 'valor_produto', e.target.value)} required />
+              {/* O atributo 'required' foi removido deste input */}
+              <input type="number" step="0.01" className="input-field" value={item.valor_produto} onChange={(e) => handleItemChange(index, 'valor_produto', e.target.value)} />
             </div>
             <button type="button" onClick={() => removerItem(index)} className="btn btn-danger" title="Remover Produto">X</button>
           </div>

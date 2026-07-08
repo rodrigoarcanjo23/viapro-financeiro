@@ -41,6 +41,14 @@ export function ListaNotasEntrada() {
 
   useEffect(() => {
     buscarNotas();
+    
+    // Adiciona o "ouvido" para atualizar automaticamente quando salvar nota nova
+    window.addEventListener('notaEntradaSalva', buscarNotas);
+    
+    // Limpa o "ouvido" quando o componente for desmontado para evitar duplicação
+    return () => {
+      window.removeEventListener('notaEntradaSalva', buscarNotas);
+    };
   }, []);
 
   const handleDelete = async (id: string) => {
@@ -103,12 +111,11 @@ export function ListaNotasEntrada() {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
   };
 
-  // Cores visuais para o status da Nota
   const getBadgeStyle = (situacao: string) => {
     if (situacao === 'Lançada') return { backgroundColor: '#dcfce7', color: '#166534', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' };
     if (situacao === 'Cancelada') return { backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' };
     if (situacao === 'Devolvida') return { backgroundColor: '#e0e7ff', color: '#3730a3', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' };
-    return { backgroundColor: '#fef3c7', color: '#92400e', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }; // Pendente
+    return { backgroundColor: '#fef3c7', color: '#92400e', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' };
   };
 
   return (
@@ -235,7 +242,6 @@ export function ListaNotasEntrada() {
                   </div>
                 </div>
                 
-                {/* Campo de Observação ocupando a base do modal */}
                 <div className="form-column" style={{ gridColumn: 'span 2' }}>
                   <div className="input-group">
                     <label>Observações Adicionais</label>
