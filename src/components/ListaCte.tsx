@@ -7,7 +7,7 @@ interface Cte {
   numero_documento: string;
   cgf_emitente: string;
   razao_social_emitente: string;
-  data_emissao: string; // Novo campo tipado
+  data_emissao: string;
   valor_total_servico: number;
   base_calculo_icms: number;
   icms_destacado: number;
@@ -34,7 +34,6 @@ export function ListaCte() {
 
   useEffect(() => {
     buscarCtes();
-    // Escuta ativa para recarregar sem F5
     window.addEventListener('cteSalvo', buscarCtes);
     return () => window.removeEventListener('cteSalvo', buscarCtes);
   }, []);
@@ -56,7 +55,7 @@ export function ListaCte() {
       razao_social_emitente: editingCte.razao_social_emitente,
       chave_acesso: editingCte.chave_acesso,
       numero_documento: editingCte.numero_documento,
-      data_emissao: editingCte.data_emissao, // Editando a data
+      data_emissao: editingCte.data_emissao,
       cgf_emitente: editingCte.cgf_emitente,
       valor_total_servico: editingCte.valor_total_servico,
       base_calculo_icms: editingCte.base_calculo_icms,
@@ -83,7 +82,7 @@ export function ListaCte() {
   });
 
   const formatarMoeda = (valor: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor || 0);
   };
 
   const formatarData = (dataStr: string) => {
@@ -125,9 +124,11 @@ export function ListaCte() {
               <tr>
                 <th>Nº Doc.</th>
                 <th>Transportadora (Emitente)</th>
-                <th>Emissão</th> {/* Nova Coluna */}
+                <th>Emissão</th>
                 <th>Chave de Acesso</th>
                 <th>Valor do Serviço</th>
+                <th>Base ICMS</th>
+                <th>ICMS Destacado</th>
                 <th>Situação</th>
                 <th style={{ textAlign: 'right' }}>Ações</th>
               </tr>
@@ -148,6 +149,12 @@ export function ListaCte() {
                   <td style={{ color: 'var(--viapro-green)', fontWeight: '700' }}>
                     {formatarMoeda(cte.valor_total_servico)}
                   </td>
+                  <td style={{ color: 'var(--text-muted)' }}>
+                    {formatarMoeda(cte.base_calculo_icms)}
+                  </td>
+                  <td style={{ color: 'var(--text-muted)' }}>
+                    {formatarMoeda(cte.icms_destacado)}
+                  </td>
                   <td>
                     <span style={getBadgeStyle(cte.situacao)}>{cte.situacao}</span>
                   </td>
@@ -160,7 +167,7 @@ export function ListaCte() {
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
                     Nenhum CTE encontrado para esta busca.
                   </td>
                 </tr>
