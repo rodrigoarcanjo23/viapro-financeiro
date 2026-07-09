@@ -10,7 +10,7 @@ import { CteForm } from './components/CteForm';
 import { ListaCte } from './components/ListaCte';
 import { FaturamentoForm } from './components/FaturamentoForm';
 import { ListaFaturamento } from './components/ListaFaturamento';
-import { ImpostosForm } from './components/ImpostosForm';
+import { ImpostoForm } from './components/ImpostoForm';
 import { ListaImpostos } from './components/ListaImpostos';
 import { GestaoEquipe } from './components/GestaoEquipe';
 import type { Session } from '@supabase/supabase-js';
@@ -105,7 +105,7 @@ function App() {
         )}
 
         {activeTab === 'impostos' && (
-          <><ImpostosForm /><ListaImpostos /></>
+          <><ImpostoForm /><ListaImpostos /></>
         )}
 
         {activeTab === 'equipe' && <GestaoEquipe />}
