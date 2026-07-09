@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import Swal from 'sweetalert2';
 
 interface Cte {
   id: string;
@@ -12,45 +13,106 @@ interface Cte {
   base_calculo_icms: number;
   icms_destacado: number;
   situacao: string;
+  arquivo_url?: string;
 }
 
 export function ListaCte() {
   const [ctes, setCtes] = useState<Cte[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dataInicio, setDataInicio] = useState('');
+  const [dataFim, setDataFim] = useState('');
+
+  const [pagina, setPagina] = useState(0);
+  const itensPorPagina = 5;
+  const [temMais, setTemMais] = useState(true);
 
   const [editingCte, setEditingCte] = useState<Cte | null>(null);
   const [editLoading, setEditLoading] = useState(false);
 
-  const buscarCtes = async () => {
+  const executarBusca = async (termo = searchTerm, inicio = dataInicio, fim = dataFim, resetPage = false) => {
     setLoading(true);
     setError(null);
-    const { data, error } = await supabase.from('cte').select('*').order('created_at', { ascending: false });
-    if (error) setError(error.message);
-    else setCtes(data || []);
+    const currentPage = resetPage ? 0 : pagina;
+    if (resetPage) setPagina(0);
+
+    let query = supabase.from('cte').select('*');
+
+    if (termo) {
+      query = query.or(`razao_social_emitente.ilike.%${termo}%,numero_documento.ilike.%${termo}%,chave_acesso.ilike.%${termo}%`);
+    }
+
+    if (inicio) query = query.gte('data_emissao', inicio);
+    if (fim) query = query.lte('data_emissao', fim);
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .range(currentPage * itensPorPagina, (currentPage + 1) * itensPorPagina - 1);
+
+    if (error) {
+      setError(error.message);
+    } else {
+      if (data.length < itensPorPagina) setTemMais(false);
+      else setTemMais(true);
+      setCtes(data || []);
+    }
     setLoading(false);
   };
 
-  useEffect(() => {
-    buscarCtes();
-    window.addEventListener('cteSalvo', buscarCtes);
-    return () => window.removeEventListener('cteSalvo', buscarCtes);
-  }, []);
+  const limparFiltros = () => {
+    setSearchTerm(''); setDataInicio(''); setDataFim('');
+    executarBusca('', '', '', true);
+  };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Atenção: Tem certeza que deseja excluir este CTE permanentemente?")) return;
+  useEffect(() => {
+    executarBusca(searchTerm, dataInicio, dataFim, false);
+  }, [pagina]);
+
+  useEffect(() => {
+    const listener = () => executarBusca(searchTerm, dataInicio, dataFim, true);
+    window.addEventListener('cteSalvo', listener);
+    return () => window.removeEventListener('cteSalvo', listener);
+  }, [searchTerm, dataInicio, dataFim]);
+
+  const handleDelete = async (id: string, numero: string) => {
+    const result = await Swal.fire({
+      title: 'Eliminar CTE?',
+      text: `Confirma a exclusão permanente do CTE nº ${numero}?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sim, eliminar!',
+      cancelButtonText: 'Cancelar'
+    });
+
+    if (!result.isConfirmed) return;
     
+    const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from('cte').delete().eq('id', id);
-    if (error) alert(`Erro ao excluir: ${error.message}`);
-    else setCtes(ctes.filter(cte => cte.id !== id));
+    
+    if (error) {
+      Swal.fire('Erro!', `Falha ao eliminar: ${error.message}`, 'error');
+    } else {
+      await supabase.from('logs_auditoria').insert([{
+        usuario: user?.email || 'Sistema',
+        acao: 'Exclusão de Registo',
+        tabela: 'cte',
+        detalhes: `CTE nº ${numero} removido do sistema.`
+      }]);
+      Swal.fire('Eliminado!', 'O CTE foi apagado com sucesso.', 'success');
+      executarBusca(searchTerm, dataInicio, dataFim, true);
+    }
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCte) return;
-    
     setEditLoading(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from('cte').update({
       razao_social_emitente: editingCte.razao_social_emitente,
       chave_acesso: editingCte.chave_acesso,
@@ -64,22 +126,29 @@ export function ListaCte() {
     }).eq('id', editingCte.id);
 
     if (error) {
-      alert(`Erro ao atualizar: ${error.message}`);
+      Swal.fire('Erro!', `Não foi possível atualizar: ${error.message}`, 'error');
     } else {
+      await supabase.from('logs_auditoria').insert([{
+        usuario: user?.email || 'Sistema',
+        acao: 'Edição de Registo',
+        tabela: 'cte',
+        registro_id: editingCte.id,
+        detalhes: `Dados do CTE nº ${editingCte.numero_documento} foram atualizados.`
+      }]);
+      
+      Swal.fire({
+        icon: 'success',
+        title: 'Atualizado!',
+        text: 'As alterações foram guardadas.',
+        timer: 1500,
+        showConfirmButton: false
+      });
+      
       setEditingCte(null);
-      buscarCtes();
+      executarBusca(searchTerm, dataInicio, dataFim, false);
     }
     setEditLoading(false);
   };
-
-  const ctesFiltrados = ctes.filter(cte => {
-    const termo = searchTerm.toLowerCase();
-    return (
-      cte.razao_social_emitente.toLowerCase().includes(termo) ||
-      cte.chave_acesso.includes(termo) ||
-      cte.numero_documento.includes(termo)
-    );
-  });
 
   const formatarMoeda = (valor: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor || 0);
@@ -99,24 +168,41 @@ export function ListaCte() {
 
   return (
     <div className="premium-card">
-      <div className="card-header">
+      <div className="card-header" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: '1rem' }}>
         <h2>Histórico de Transportes (CTE)</h2>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <input 
-            type="text" 
-            placeholder="Buscar por transportadora, chave ou doc..." 
-            className="search-bar"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <button onClick={buscarCtes} className="btn btn-primary">Atualizar</button>
+      </div>
+
+      <div style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: 'var(--radius-md)', marginBottom: '2rem', border: '1px solid var(--border-color)' }}>
+        <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: '1 1 300px' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>
+              Busca (Transportadora ou Nº Doc)
+            </label>
+            <input type="text" className="input-field" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Ex: Trans CJ..." />
+          </div>
+          <div style={{ flex: '1 1 150px' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>
+              Emissão (De)
+            </label>
+            <input type="date" className="input-field" value={dataInicio} onChange={e => setDataInicio(e.target.value)} />
+          </div>
+          <div style={{ flex: '1 1 150px' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>
+              Emissão (Até)
+            </label>
+            <input type="date" className="input-field" value={dataFim} onChange={e => setDataFim(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button onClick={() => executarBusca(searchTerm, dataInicio, dataFim, true)} className="btn btn-primary" style={{ padding: '0.65rem 1.5rem' }}>🔍 Filtrar</button>
+            <button onClick={limparFiltros} className="btn btn-logout" style={{ padding: '0.65rem 1.5rem' }}>Limpar</button>
+          </div>
         </div>
       </div>
 
       {error && <div className="status-msg status-error">Erro: {error}</div>}
 
-      {loading ? (
-        <p style={{ color: 'var(--text-muted)' }}>Buscando dados...</p>
+      {loading && ctes.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)' }}>A procurar dados no servidor...</p>
       ) : (
         <div className="table-container">
           <table className="custom-table">
@@ -125,35 +211,27 @@ export function ListaCte() {
                 <th>Nº Doc.</th>
                 <th>Transportadora (Emitente)</th>
                 <th>Emissão</th>
-                <th>Chave de Acesso</th>
                 <th>Valor do Serviço</th>
-                <th>Base ICMS</th>
-                <th>ICMS Destacado</th>
+                <th>Anexo</th>
                 <th>Situação</th>
                 <th style={{ textAlign: 'right' }}>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {ctesFiltrados.length > 0 ? ctesFiltrados.map((cte) => (
+              {ctes.length > 0 ? ctes.map((cte) => (
                 <tr key={cte.id}>
                   <td style={{ fontWeight: '600' }}>{cte.numero_documento}</td>
                   <td>
                     <strong style={{ color: 'var(--text-main)' }}>{cte.razao_social_emitente}</strong>
-                    <br />
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>CGF: {cte.cgf_emitente || 'N/A'}</span>
                   </td>
                   <td>{formatarData(cte.data_emissao)}</td>
-                  <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                    {cte.chave_acesso}
-                  </td>
                   <td style={{ color: 'var(--viapro-green)', fontWeight: '700' }}>
                     {formatarMoeda(cte.valor_total_servico)}
                   </td>
-                  <td style={{ color: 'var(--text-muted)' }}>
-                    {formatarMoeda(cte.base_calculo_icms)}
-                  </td>
-                  <td style={{ color: 'var(--text-muted)' }}>
-                    {formatarMoeda(cte.icms_destacado)}
+                  <td>
+                    {cte.arquivo_url ? (
+                      <a href={cte.arquivo_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-primary" style={{padding: '2px 8px', fontSize: '0.75rem'}}>👁 Ver</a>
+                    ) : <span style={{color: '#ccc', fontSize: '0.85rem'}}>Nenhum</span>}
                   </td>
                   <td>
                     <span style={getBadgeStyle(cte.situacao)}>{cte.situacao}</span>
@@ -161,23 +239,28 @@ export function ListaCte() {
                   <td style={{ textAlign: 'right' }}>
                     <div className="table-actions" style={{ justifyContent: 'flex-end' }}>
                       <button onClick={() => setEditingCte(cte)} className="btn btn-sm btn-warning">Editar</button>
-                      <button onClick={() => handleDelete(cte.id)} className="btn btn-sm btn-danger">Excluir</button>
+                      <button onClick={() => handleDelete(cte.id, cte.numero_documento)} className="btn btn-sm btn-danger">Excluir</button>
                     </div>
                   </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                    Nenhum CTE encontrado para esta busca.
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                    Nenhum CTE encontrado para estes filtros.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+            <button disabled={pagina === 0} onClick={() => setPagina(prev => prev - 1)} className="btn btn-logout btn-sm">◀ Página Anterior</button>
+            <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-muted)' }}>Página {pagina + 1}</span>
+            <button disabled={!temMais} onClick={() => setPagina(prev => prev + 1)} className="btn btn-logout btn-sm">Próxima Página ▶</button>
+          </div>
         </div>
       )}
 
-      {/* Janela Modal de Edição */}
       {editingCte && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -203,10 +286,6 @@ export function ListaCte() {
                   <div className="input-group">
                     <label>Data de Emissão</label>
                     <input type="date" className="input-field" value={editingCte.data_emissao || ''} onChange={(e) => setEditingCte({...editingCte, data_emissao: e.target.value})} required />
-                  </div>
-                  <div className="input-group">
-                    <label>CGF do Emitente</label>
-                    <input type="text" className="input-field" value={editingCte.cgf_emitente} onChange={(e) => setEditingCte({...editingCte, cgf_emitente: e.target.value})} />
                   </div>
                 </div>
                 <div className="form-column">
@@ -234,7 +313,7 @@ export function ListaCte() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '2rem' }}>
                 <button type="button" onClick={() => setEditingCte(null)} className="btn btn-logout">Cancelar</button>
-                <button type="submit" disabled={editLoading} className="btn btn-primary">{editLoading ? 'Salvando...' : 'Salvar Alterações'}</button>
+                <button type="submit" disabled={editLoading} className="btn btn-primary">{editLoading ? 'A Guardar...' : 'Guardar Alterações'}</button>
               </div>
             </form>
           </div>

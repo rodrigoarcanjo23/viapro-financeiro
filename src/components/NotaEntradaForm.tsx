@@ -1,56 +1,44 @@
 import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import Swal from 'sweetalert2';
 
-interface ItemNota {
-  produto: string;
-  tipo_produto: string;
-  valor_produto: string;
-}
+interface ItemNota { produto: string; tipo_produto: string; valor_produto: string; }
 
 export function NotaEntradaForm() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const anexoInputRef = useRef<HTMLInputElement>(null);
+
   const [formData, setFormData] = useState({
-    cnpj: '', razao_social: '', chave_acesso: '', uf: '',
-    data_emissao: '', data_entrada: '', numero_nfe: '',
-    cfop: '', valor_nfe: '', protocolo: '',
-    situacao: 'Lançada', observacao: ''
+    cnpj: '', razao_social: '', chave_acesso: '', uf: '', data_emissao: '', data_entrada: '', numero_nfe: '',
+    cfop: '', valor_nfe: '', protocolo: '', situacao: 'Lançada', observacao: ''
   });
   
   const [itens, setItens] = useState<ItemNota[]>([]);
   const [gerarFaturamento, setGerarFaturamento] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState('');
-  
   const [loading, setLoading] = useState(false);
   const [xmlLoading, setXmlLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [msgType, setMsgType] = useState<'success' | 'error' | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const adicionarItem = () => {
-    setItens([...itens, { produto: '', tipo_produto: 'Consumo', valor_produto: '' }]);
-  };
-
-  const removerItem = (index: number) => {
-    setItens(itens.filter((_, i) => i !== index));
-  };
-
+  const adicionarItem = () => setItens([...itens, { produto: '', tipo_produto: 'Consumo', valor_produto: '' }]);
+  const removerItem = (index: number) => setItens(itens.filter((_, i) => i !== index));
   const handleItemChange = (index: number, campo: keyof ItemNota, valor: string) => {
-    const novosItens = [...itens];
-    novosItens[index][campo] = valor;
-    setItens(novosItens);
+    const novosItens = [...itens]; novosItens[index][campo] = valor; setItens(novosItens);
   };
 
-  // FUNÇÃO CORRIGIDA DE LEITURA DO XML
+  const handleRemoverAnexo = () => {
+    setSelectedFile(null);
+    setFileName('');
+    if (anexoInputRef.current) anexoInputRef.current.value = '';
+  };
+
   const handleImportarXML = (e: React.ChangeEvent<HTMLInputElement>) => {
     const arquivo = e.target.files?.[0];
     if (!arquivo) return;
-
     setXmlLoading(true);
-    setMessage('');
     
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -59,7 +47,6 @@ export function NotaEntradaForm() {
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(xmlText, "text/xml");
 
-        // Captura das tags padrões da SEFAZ
         const cnpj = xmlDoc.getElementsByTagName("CNPJ")[0]?.textContent || "";
         const razao = xmlDoc.getElementsByTagName("xNome")[0]?.textContent || "";
         const numero = xmlDoc.getElementsByTagName("nNF")[0]?.textContent || "";
@@ -78,14 +65,11 @@ export function NotaEntradaForm() {
         if (emissao) emissao = emissao.substring(0, 10);
 
         setFormData(prev => ({
-          ...prev,
-          cnpj, razao_social: razao, numero_nfe: numero, uf, cfop, valor_nfe: valor, protocolo, chave_acesso: chave, data_emissao: emissao, data_entrada: emissao // Sugere a data de entrada igual à de emissão
+          ...prev, cnpj, razao_social: razao, numero_nfe: numero, uf, cfop, valor_nfe: valor, protocolo, chave_acesso: chave, data_emissao: emissao, data_entrada: emissao
         }));
 
-        // Parser automático dos produtos contidos no XML
         const prodElements = xmlDoc.getElementsByTagName("det");
         const itensCarregados: ItemNota[] = [];
-        
         for (let i = 0; i < prodElements.length; i++) {
           const p = prodElements[i].getElementsByTagName("prod")[0];
           const descricao = p?.getElementsByTagName("xProd")[0]?.textContent || "Produto sem descrição";
@@ -94,26 +78,40 @@ export function NotaEntradaForm() {
         }
         
         setItens(itensCarregados);
-        setMsgType('success');
-        setMessage('XML processado! Todos os campos foram preenchidos.');
+        Swal.fire('XML Processado!', 'Os dados foram preenchidos com sucesso.', 'success');
       } catch (err) {
-        setMsgType('error');
-        setMessage('Falha ao ler a estrutura do arquivo XML. Verifique o arquivo.');
+        Swal.fire('Erro no XML', 'Falha ao ler a estrutura do arquivo. Verifique o documento.', 'error');
       } finally {
         setXmlLoading(false);
       }
     };
     reader.readAsText(arquivo);
-    
-    // Limpa o input para permitir subir o mesmo arquivo de novo se houver erro
     e.target.value = ''; 
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setMessage('');
 
+    // 1. VERIFICAÇÃO ANTI-DUPLICIDADE DE ALTA PERFORMANCE
+    const { data: notaDuplicada } = await supabase
+      .from('notas_entrada')
+      .select('id')
+      .eq('chave_acesso', formData.chave_acesso)
+      .maybeSingle();
+
+    if (notaDuplicada) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Nota Já Registrada!',
+        text: `A NF-e com a chave terminada em "...${formData.chave_acesso.slice(-4)}" já consta no sistema. Não é possível cadastrá-la em duplicidade.`,
+        confirmButtonColor: '#1e40af'
+      });
+      setLoading(false);
+      return;
+    }
+
+    // 2. CONTINUA O FLUXO NORMAL
     const { data: { user } } = await supabase.auth.getUser();
     const cnpjLimpo = formData.cnpj.replace(/\D/g, '');
     const valorNfeFloat = parseFloat(formData.valor_nfe) || 0;
@@ -122,18 +120,11 @@ export function NotaEntradaForm() {
     if (selectedFile) {
       const fileExt = selectedFile.name.split('.').pop();
       const fileNameUpload = `${Date.now()}_nota.${fileExt}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('documentos')
-        .upload(fileNameUpload, selectedFile);
-
+      const { error: uploadError } = await supabase.storage.from('documentos').upload(fileNameUpload, selectedFile);
       if (uploadError) {
-        setMsgType('error');
-        setMessage(`Erro ao fazer upload do anexo: ${uploadError.message}`);
-        setLoading(false);
-        return;
+        Swal.fire('Erro no Anexo', uploadError.message, 'error');
+        setLoading(false); return;
       }
-
       const { data: publicUrlData } = supabase.storage.from('documentos').getPublicUrl(fileNameUpload);
       urlArquivoFinal = publicUrlData.publicUrl;
     }
@@ -141,59 +132,42 @@ export function NotaEntradaForm() {
     const { data: notaData, error: notaError } = await supabase
       .from('notas_entrada')
       .insert([{
-        cnpj: cnpjLimpo, razao_social: formData.razao_social,
-        chave_acesso: formData.chave_acesso, uf: formData.uf,
-        data_emissao: formData.data_emissao, data_entrada: formData.data_entrada,
-        numero_nfe: formData.numero_nfe, cfop: formData.cfop,
-        valor_nfe: valorNfeFloat, protocolo: formData.protocolo,
-        situacao: formData.situacao, observacao: formData.observacao,
+        cnpj: cnpjLimpo, razao_social: formData.razao_social, chave_acesso: formData.chave_acesso, uf: formData.uf,
+        data_emissao: formData.data_emissao, data_entrada: formData.data_entrada, numero_nfe: formData.numero_nfe, cfop: formData.cfop,
+        valor_nfe: valorNfeFloat, protocolo: formData.protocolo, situacao: formData.situacao, observacao: formData.observacao,
         arquivo_url: urlArquivoFinal
       }])
       .select('id').single();
 
     if (notaError) {
-      setMsgType('error');
-      setMessage(`Erro ao salvar a nota: ${notaError.message}`);
-      setLoading(false);
-      return;
+      Swal.fire('Erro', notaError.message, 'error'); setLoading(false); return;
     }
 
     if (notaData && itens.length > 0) {
       const itensFormatados = itens.map(item => ({
-        nota_entrada_id: notaData.id, produto: item.produto,
-        tipo_produto: item.tipo_produto, valor_produto: parseFloat(item.valor_produto) || 0
+        nota_entrada_id: notaData.id, produto: item.produto, tipo_produto: item.tipo_produto, valor_produto: parseFloat(item.valor_produto) || 0
       }));
-
       await supabase.from('itens_nota_entrada').insert(itensFormatados);
     }
 
     if (notaData && gerarFaturamento) {
       await supabase.from('faturamento').insert([{
         tipo: 'A Pagar', status: 'Pendente', data_vencimento: formData.data_entrada,
-        valor_bruto: valorNfeFloat, descontos: 0, acrescimos: 0, valor_liquido: valorNfeFloat,
-        nota_entrada_id: notaData.id
+        valor_bruto: valorNfeFloat, descontos: 0, acrescimos: 0, valor_liquido: valorNfeFloat, nota_entrada_id: notaData.id
       }]);
     }
 
     await supabase.from('logs_auditoria').insert([{
-      usuario: user?.email || 'Sistema',
-      acao: 'Criação de Registro',
-      tabela: 'notas_entrada',
-      registro_id: notaData.id,
-      detalhes: `Lançamento manual ou via XML da NF-e nº ${formData.numero_nfe} do Fornecedor ${formData.razao_social}`
+      usuario: user?.email || 'Sistema', acao: 'Criação de Registro', tabela: 'notas_entrada',
+      registro_id: notaData.id, detalhes: `Lançamento da NF-e nº ${formData.numero_nfe} do Fornecedor ${formData.razao_social}`
     }]);
 
-    setMsgType('success');
-    setMessage('Nota Fiscal lançada e auditada com sucesso!');
-    setFormData({ 
-      cnpj: '', razao_social: '', chave_acesso: '', uf: '', data_emissao: '', 
-      data_entrada: '', numero_nfe: '', cfop: '', valor_nfe: '', protocolo: '',
-      situacao: 'Lançada', observacao: '' 
-    });
+    Swal.fire('Sucesso!', 'Nota Fiscal lançada e auditada sem duplicidades.', 'success');
+    
+    setFormData({ cnpj: '', razao_social: '', chave_acesso: '', uf: '', data_emissao: '', data_entrada: '', numero_nfe: '', cfop: '', valor_nfe: '', protocolo: '', situacao: 'Lançada', observacao: '' });
     setItens([]);
     setGerarFaturamento(false);
-    setSelectedFile(null);
-    setFileName('');
+    handleRemoverAnexo();
     setLoading(false);
     
     window.dispatchEvent(new Event('notaEntradaSalva'));
@@ -205,25 +179,13 @@ export function NotaEntradaForm() {
       <div className="card-header">
         <h2>Registro Avançado de Nota de Entrada</h2>
         <div style={{ display: 'flex', gap: '1rem' }}>
-          {/* BOTÃO CORRIGIDO E CONECTADO */}
           <label className="btn btn-primary" style={{ fontSize: '0.85rem', gap: '0.5rem', cursor: 'pointer' }}>
             {xmlLoading ? 'Lendo...' : '📁 Importar XML da Nota'}
-            <input 
-              type="file" 
-              accept=".xml" 
-              style={{ display: 'none' }} 
-              onChange={handleImportarXML} 
-            />
+            <input type="file" accept=".xml" style={{ display: 'none' }} onChange={handleImportarXML} />
           </label>
         </div>
       </div>
       
-      {message && (
-        <div className={`status-msg ${msgType === 'error' ? 'status-error' : 'status-success'}`}>
-          {message}
-        </div>
-      )}
-
       <form onSubmit={handleSubmit}>
         <div className="form-grid">
           <div className="form-column">
@@ -287,14 +249,17 @@ export function NotaEntradaForm() {
             
             <div className="input-group" style={{ marginTop: '0.5rem' }}>
               <label>Anexar Nota Fiscal / Comprovante</label>
-              <input type="file" className="input-field" onChange={(e) => {
+              <input type="file" className="input-field" ref={anexoInputRef} onChange={(e) => {
                 const file = e.target.files?.[0];
-                if(file) {
-                  setSelectedFile(file);
-                  setFileName(file.name);
-                }
+                if(file) { setSelectedFile(file); setFileName(file.name); }
               }} />
-              {fileName && <span style={{fontSize: '0.8rem', color: 'var(--viapro-green)', fontWeight: '600'}}>📎 {fileName} preparado para envio</span>}
+              
+              {fileName && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.8rem', padding: '0.6rem 1rem', backgroundColor: '#f8fafc', border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+                  <span style={{fontSize: '0.85rem', color: 'var(--viapro-green)', fontWeight: '600'}}>📎 {fileName}</span>
+                  <button type="button" onClick={handleRemoverAnexo} style={{ background: '#fee2e2', color: '#ef4444', border: 'none', borderRadius: '4px', padding: '0.3rem 0.6rem', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.75rem' }}>✖ Remover</button>
+                </div>
+              )}
             </div>
           </div>
           
@@ -308,9 +273,7 @@ export function NotaEntradaForm() {
 
         <div className="card-header" style={{ marginTop: '2.5rem' }}>
           <h2>Itens e Produtos</h2>
-          <button type="button" onClick={adicionarItem} className="btn btn-primary" style={{ fontSize: '0.8rem' }}>
-            + Adicionar Produto
-          </button>
+          <button type="button" onClick={adicionarItem} className="btn btn-primary" style={{ fontSize: '0.8rem' }}>+ Adicionar Produto</button>
         </div>
         
         {itens.map((item, index) => (
