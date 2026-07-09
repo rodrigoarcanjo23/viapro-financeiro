@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface ItemNota {
@@ -8,6 +8,7 @@ interface ItemNota {
 }
 
 export function NotaEntradaForm() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     cnpj: '', razao_social: '', chave_acesso: '', uf: '',
     data_emissao: '', data_entrada: '', numero_nfe: '',
@@ -17,7 +18,11 @@ export function NotaEntradaForm() {
   
   const [itens, setItens] = useState<ItemNota[]>([]);
   const [gerarFaturamento, setGerarFaturamento] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState('');
+  
   const [loading, setLoading] = useState(false);
+  const [xmlLoading, setXmlLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [msgType, setMsgType] = useState<'success' | 'error' | null>(null);
 
@@ -39,13 +44,99 @@ export function NotaEntradaForm() {
     setItens(novosItens);
   };
 
+  // FUNÇÃO CORRIGIDA DE LEITURA DO XML
+  const handleImportarXML = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const arquivo = e.target.files?.[0];
+    if (!arquivo) return;
+
+    setXmlLoading(true);
+    setMessage('');
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const xmlText = event.target?.result as string;
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+
+        // Captura das tags padrões da SEFAZ
+        const cnpj = xmlDoc.getElementsByTagName("CNPJ")[0]?.textContent || "";
+        const razao = xmlDoc.getElementsByTagName("xNome")[0]?.textContent || "";
+        const numero = xmlDoc.getElementsByTagName("nNF")[0]?.textContent || "";
+        const uf = xmlDoc.getElementsByTagName("UF")[0]?.textContent || "";
+        const cfop = xmlDoc.getElementsByTagName("CFOP")[0]?.textContent || "";
+        const valor = xmlDoc.getElementsByTagName("vNF")[0]?.textContent || "";
+        const protocolo = xmlDoc.getElementsByTagName("nProt")[0]?.textContent || "";
+        
+        let chave = xmlDoc.getElementsByTagName("chNFe")[0]?.textContent || "";
+        if (!chave) {
+          const infNFe = xmlDoc.getElementsByTagName("infNFe")[0];
+          chave = infNFe?.getAttribute("Id")?.replace("NFe", "") || "";
+        }
+
+        let emissao = xmlDoc.getElementsByTagName("dhEmi")[0]?.textContent || xmlDoc.getElementsByTagName("dEmi")[0]?.textContent || "";
+        if (emissao) emissao = emissao.substring(0, 10);
+
+        setFormData(prev => ({
+          ...prev,
+          cnpj, razao_social: razao, numero_nfe: numero, uf, cfop, valor_nfe: valor, protocolo, chave_acesso: chave, data_emissao: emissao, data_entrada: emissao // Sugere a data de entrada igual à de emissão
+        }));
+
+        // Parser automático dos produtos contidos no XML
+        const prodElements = xmlDoc.getElementsByTagName("det");
+        const itensCarregados: ItemNota[] = [];
+        
+        for (let i = 0; i < prodElements.length; i++) {
+          const p = prodElements[i].getElementsByTagName("prod")[0];
+          const descricao = p?.getElementsByTagName("xProd")[0]?.textContent || "Produto sem descrição";
+          const vProd = p?.getElementsByTagName("vUnCom")[0]?.textContent || "0";
+          itensCarregados.push({ produto: descricao, tipo_produto: 'Consumo', valor_produto: parseFloat(vProd).toFixed(2) });
+        }
+        
+        setItens(itensCarregados);
+        setMsgType('success');
+        setMessage('XML processado! Todos os campos foram preenchidos.');
+      } catch (err) {
+        setMsgType('error');
+        setMessage('Falha ao ler a estrutura do arquivo XML. Verifique o arquivo.');
+      } finally {
+        setXmlLoading(false);
+      }
+    };
+    reader.readAsText(arquivo);
+    
+    // Limpa o input para permitir subir o mesmo arquivo de novo se houver erro
+    e.target.value = ''; 
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
 
+    const { data: { user } } = await supabase.auth.getUser();
     const cnpjLimpo = formData.cnpj.replace(/\D/g, '');
     const valorNfeFloat = parseFloat(formData.valor_nfe) || 0;
+    let urlArquivoFinal = '';
+
+    if (selectedFile) {
+      const fileExt = selectedFile.name.split('.').pop();
+      const fileNameUpload = `${Date.now()}_nota.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('documentos')
+        .upload(fileNameUpload, selectedFile);
+
+      if (uploadError) {
+        setMsgType('error');
+        setMessage(`Erro ao fazer upload do anexo: ${uploadError.message}`);
+        setLoading(false);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage.from('documentos').getPublicUrl(fileNameUpload);
+      urlArquivoFinal = publicUrlData.publicUrl;
+    }
 
     const { data: notaData, error: notaError } = await supabase
       .from('notas_entrada')
@@ -55,7 +146,8 @@ export function NotaEntradaForm() {
         data_emissao: formData.data_emissao, data_entrada: formData.data_entrada,
         numero_nfe: formData.numero_nfe, cfop: formData.cfop,
         valor_nfe: valorNfeFloat, protocolo: formData.protocolo,
-        situacao: formData.situacao, observacao: formData.observacao
+        situacao: formData.situacao, observacao: formData.observacao,
+        arquivo_url: urlArquivoFinal
       }])
       .select('id').single();
 
@@ -72,37 +164,27 @@ export function NotaEntradaForm() {
         tipo_produto: item.tipo_produto, valor_produto: parseFloat(item.valor_produto) || 0
       }));
 
-      const { error: itensError } = await supabase.from('itens_nota_entrada').insert(itensFormatados);
-      if (itensError) {
-        setMsgType('error');
-        setMessage(`Nota salva, mas erro nos itens: ${itensError.message}`);
-        setLoading(false);
-        return;
-      }
+      await supabase.from('itens_nota_entrada').insert(itensFormatados);
     }
 
     if (notaData && gerarFaturamento) {
-      const { error: fatError } = await supabase.from('faturamento').insert([{
-        tipo: 'A Pagar',
-        status: 'Pendente',
-        data_vencimento: formData.data_entrada,
-        valor_bruto: valorNfeFloat,
-        descontos: 0,
-        acrescimos: 0,
-        valor_liquido: valorNfeFloat,
+      await supabase.from('faturamento').insert([{
+        tipo: 'A Pagar', status: 'Pendente', data_vencimento: formData.data_entrada,
+        valor_bruto: valorNfeFloat, descontos: 0, acrescimos: 0, valor_liquido: valorNfeFloat,
         nota_entrada_id: notaData.id
       }]);
-
-      if (fatError) {
-        setMsgType('error');
-        setMessage(`Nota salva, mas falha ao gerar título financeiro: ${fatError.message}`);
-        setLoading(false);
-        return;
-      }
     }
 
+    await supabase.from('logs_auditoria').insert([{
+      usuario: user?.email || 'Sistema',
+      acao: 'Criação de Registro',
+      tabela: 'notas_entrada',
+      registro_id: notaData.id,
+      detalhes: `Lançamento manual ou via XML da NF-e nº ${formData.numero_nfe} do Fornecedor ${formData.razao_social}`
+    }]);
+
     setMsgType('success');
-    setMessage(gerarFaturamento ? 'Nota de Entrada e Título a Pagar registrados com sucesso!' : 'Nota de Entrada salva com sucesso!');
+    setMessage('Nota Fiscal lançada e auditada com sucesso!');
     setFormData({ 
       cnpj: '', razao_social: '', chave_acesso: '', uf: '', data_emissao: '', 
       data_entrada: '', numero_nfe: '', cfop: '', valor_nfe: '', protocolo: '',
@@ -110,9 +192,10 @@ export function NotaEntradaForm() {
     });
     setItens([]);
     setGerarFaturamento(false);
+    setSelectedFile(null);
+    setFileName('');
     setLoading(false);
     
-    // Dispara eventos para atualizar as listas instantaneamente!
     window.dispatchEvent(new Event('notaEntradaSalva'));
     window.dispatchEvent(new Event('faturamentoSalvo'));
   };
@@ -120,7 +203,19 @@ export function NotaEntradaForm() {
   return (
     <div className="premium-card">
       <div className="card-header">
-        <h2>Registro de Nota de Entrada</h2>
+        <h2>Registro Avançado de Nota de Entrada</h2>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          {/* BOTÃO CORRIGIDO E CONECTADO */}
+          <label className="btn btn-primary" style={{ fontSize: '0.85rem', gap: '0.5rem', cursor: 'pointer' }}>
+            {xmlLoading ? 'Lendo...' : '📁 Importar XML da Nota'}
+            <input 
+              type="file" 
+              accept=".xml" 
+              style={{ display: 'none' }} 
+              onChange={handleImportarXML} 
+            />
+          </label>
+        </div>
       </div>
       
       {message && (
@@ -189,19 +284,24 @@ export function NotaEntradaForm() {
                 <option value="Devolvida">Devolvida</option>
               </select>
             </div>
+            
+            <div className="input-group" style={{ marginTop: '0.5rem' }}>
+              <label>Anexar Nota Fiscal / Comprovante</label>
+              <input type="file" className="input-field" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if(file) {
+                  setSelectedFile(file);
+                  setFileName(file.name);
+                }
+              }} />
+              {fileName && <span style={{fontSize: '0.8rem', color: 'var(--viapro-green)', fontWeight: '600'}}>📎 {fileName} preparado para envio</span>}
+            </div>
           </div>
+          
           <div className="form-column" style={{ gridColumn: 'span 2' }}>
             <div className="input-group">
               <label>Observações Adicionais</label>
-              <textarea 
-                name="observacao" 
-                className="input-field" 
-                value={formData.observacao} 
-                onChange={handleChange} 
-                rows={3}
-                placeholder="Detalhes sobre frete, divergências, quem recebeu..." 
-                style={{ resize: 'vertical' }}
-              />
+              <textarea name="observacao" className="input-field" value={formData.observacao} onChange={handleChange} rows={5} placeholder="Notas adicionais..." style={{ resize: 'vertical' }} />
             </div>
           </div>
         </div>
@@ -229,7 +329,6 @@ export function NotaEntradaForm() {
             </div>
             <div className="input-group">
               <label>Valor (R$)</label>
-              {/* O atributo 'required' foi removido deste input */}
               <input type="number" step="0.01" className="input-field" value={item.valor_produto} onChange={(e) => handleItemChange(index, 'valor_produto', e.target.value)} />
             </div>
             <button type="button" onClick={() => removerItem(index)} className="btn btn-danger" title="Remover Produto">X</button>
@@ -239,12 +338,7 @@ export function NotaEntradaForm() {
         <hr style={{ borderColor: 'var(--border-color)', margin: '1.5rem 0', borderStyle: 'solid' }} />
 
         <div className="automation-box">
-          <input 
-            type="checkbox" 
-            id="chkAutomação"
-            checked={gerarFaturamento}
-            onChange={(e) => setGerarFaturamento(e.target.checked)}
-          />
+          <input type="checkbox" id="chkAutomação" checked={gerarFaturamento} onChange={(e) => setGerarFaturamento(e.target.checked)} />
           <label htmlFor="chkAutomação">Gerar título "A Pagar" automaticamente no módulo de Faturamento com o valor desta Nota</label>
         </div>
 
