@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import Swal from 'sweetalert2';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface NotaSaida {
   id: string;
@@ -23,72 +25,146 @@ export function ListaNotasSaida() {
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
 
-  const [pagina, setPagina] = useState(0);
-  const itensPorPagina = 5;
-  const [temMais, setTemMais] = useState(true);
-
   const [editingNota, setEditingNota] = useState<NotaSaida | null>(null);
   const [editLoading, setEditLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
 
-  const executarBusca = async (termo = searchTerm, inicio = dataInicio, fim = dataFim, resetPage = false) => {
-    setLoading(true);
-    setError(null);
-    const currentPage = resetPage ? 0 : pagina;
-    if (resetPage) setPagina(0);
+  const executarBusca = async (termo = searchTerm, inicio = dataInicio, fim = dataFim) => {
+    setLoading(true); setError(null);
 
     let query = supabase.from('notas_saida').select('*');
 
     if (termo) {
       const termClean = termo.replace(/\D/g, '');
       let orString = `razao_social.ilike.%${termo}%,numero_nfe.ilike.%${termo}%`;
-      if (termClean) {
-        orString += `,cnpj.ilike.%${termClean}%`;
-      }
+      if (termClean) orString += `,cnpj.ilike.%${termClean}%`;
       query = query.or(orString);
     }
 
     if (inicio) query = query.gte('data_emissao', inicio);
     if (fim) query = query.lte('data_emissao', fim);
 
-    const { data, error } = await query
-      .order('created_at', { ascending: false })
-      .range(currentPage * itensPorPagina, (currentPage + 1) * itensPorPagina - 1);
+    const { data, error } = await query.order('data_emissao', { ascending: false });
 
-    if (error) {
-      setError(error.message);
-    } else {
-      if (data.length < itensPorPagina) setTemMais(false);
-      else setTemMais(true);
-      setNotas(data || []);
-    }
+    if (error) setError(error.message);
+    else setNotas(data || []);
+    
     setLoading(false);
   };
 
   const limparFiltros = () => {
     setSearchTerm(''); setDataInicio(''); setDataFim('');
-    executarBusca('', '', '', true);
+    executarBusca('', '', '');
   };
 
-  useEffect(() => {
-    executarBusca(searchTerm, dataInicio, dataFim, false);
-  }, [pagina]);
+  useEffect(() => { executarBusca(); }, []);
 
   useEffect(() => {
-    const listener = () => executarBusca(searchTerm, dataInicio, dataFim, true);
+    const listener = () => executarBusca();
     window.addEventListener('notaSaidaSalva', listener);
     return () => window.removeEventListener('notaSaidaSalva', listener);
   }, [searchTerm, dataInicio, dataFim]);
 
+  const buscarDadosParaExportacao = async () => {
+    let query = supabase.from('notas_saida').select('*').order('data_emissao', { ascending: true });
+    if (searchTerm) {
+      const termClean = searchTerm.replace(/\D/g, '');
+      let orString = `razao_social.ilike.%${searchTerm}%,numero_nfe.ilike.%${searchTerm}%`;
+      if (termClean) orString += `,cnpj.ilike.%${termClean}%`;
+      query = query.or(orString);
+    }
+    if (dataInicio) query = query.gte('data_emissao', dataInicio);
+    if (dataFim) query = query.lte('data_emissao', dataFim);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data;
+  };
+
+  const exportarPDF = async () => {
+    try {
+      setExportLoading(true);
+      const data = await buscarDadosParaExportacao();
+      const doc = new jsPDF('landscape');
+      
+      doc.setFontSize(16);
+      doc.text("Relatório de Notas de Saída (Faturamento) - VIAPRO", 14, 15);
+      doc.setFontSize(10);
+      doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 22);
+
+      const tableData = data.map(n => [
+        n.numero_nfe, n.razao_social, formatarCNPJ(n.cnpj), formatarData(n.data_emissao), formatarMoeda(n.valor_nfe)
+      ]);
+
+      autoTable(doc, {
+        head: [['Nº NF-e', 'Cliente', 'CNPJ', 'Emissão', 'Valor Total']],
+        body: tableData, startY: 28, theme: 'grid', headStyles: { fillColor: [30, 64, 175] }
+      });
+
+      doc.save(`Relatorio_Saidas_${Date.now()}.pdf`);
+    } catch (err) {
+      Swal.fire('Erro', 'Falha ao gerar PDF.', 'error');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const exportarXML = async () => {
+    try {
+      setExportLoading(true);
+      const data = await buscarDadosParaExportacao();
+      
+      let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<RelatorioNotasSaida>\n';
+      data.forEach(n => {
+        xml += '  <Nota>\n';
+        xml += `    <NumeroNFe>${n.numero_nfe}</NumeroNFe>\n`;
+        xml += `    <ChaveAcesso>${n.chave_acesso}</ChaveAcesso>\n`;
+        xml += `    <CNPJCliente>${n.cnpj}</CNPJCliente>\n`;
+        xml += `    <RazaoSocial>${n.razao_social.replace(/&/g, '&amp;')}</RazaoSocial>\n`;
+        xml += `    <DataEmissao>${n.data_emissao}</DataEmissao>\n`;
+        xml += `    <ValorTotal>${n.valor_nfe}</ValorTotal>\n`;
+        xml += '  </Nota>\n';
+      });
+      xml += '</RelatorioNotasSaida>';
+
+      const blob = new Blob([xml], { type: 'application/xml' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `Relatorio_Saidas_${Date.now()}.xml`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    } catch (err) {
+      Swal.fire('Erro', 'Falha ao gerar XML.', 'error');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const exportarExcel = async () => {
+    try {
+      setExportLoading(true);
+      const data = await buscarDadosParaExportacao();
+      
+      const headers = ["Nº NF-e", "Chave", "CNPJ", "Cliente", "Emissao", "Valor Total"];
+      const linhas = data.map(n => [
+        n.numero_nfe, n.chave_acesso, n.cnpj, n.razao_social, n.data_emissao, n.valor_nfe.toFixed(2).replace('.', ',')
+      ]);
+
+      const conteudoCSV = [headers.join(";"), ...linhas.map(l => l.join(";"))].join("\n");
+      const blob = new Blob(["\uFEFF" + conteudoCSV], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = `Relatorio_Saidas_${Date.now()}.csv`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    } catch (err) {
+      Swal.fire('Erro', 'Falha ao gerar Excel.', 'error');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   const handleDelete = async (id: string, numero: string) => {
     const result = await Swal.fire({
-      title: 'Eliminar Nota de Saída?',
-      text: `Confirma a exclusão da NF-e nº ${numero}?`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444',
-      cancelButtonColor: '#64748b',
-      confirmButtonText: 'Sim, eliminar!',
-      cancelButtonText: 'Cancelar'
+      title: 'Eliminar Nota de Saída?', text: `Confirma a exclusão da NF-e nº ${numero}?`, icon: 'warning',
+      showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#64748b', confirmButtonText: 'Sim, eliminar!', cancelButtonText: 'Cancelar'
     });
 
     if (!result.isConfirmed) return;
@@ -96,17 +172,11 @@ export function ListaNotasSaida() {
     const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from('notas_saida').delete().eq('id', id);
     
-    if (error) {
-      Swal.fire('Erro!', `Falha ao eliminar: ${error.message}`, 'error');
-    } else {
-      await supabase.from('logs_auditoria').insert([{
-        usuario: user?.email || 'Sistema',
-        acao: 'Exclusão de Registo',
-        tabela: 'notas_saida',
-        detalhes: `NF-e de Saída nº ${numero} removida do sistema.`
-      }]);
+    if (error) Swal.fire('Erro!', `Falha ao eliminar: ${error.message}`, 'error');
+    else {
+      await supabase.from('logs_auditoria').insert([{ usuario: user?.email || 'Sistema', acao: 'Exclusão de Registo', tabela: 'notas_saida', detalhes: `NF-e de Saída nº ${numero} removida.` }]);
       Swal.fire('Eliminada!', 'A nota de saída foi apagada.', 'success');
-      executarBusca(searchTerm, dataInicio, dataFim, true);
+      executarBusca();
     }
   };
 
@@ -118,82 +188,58 @@ export function ListaNotasSaida() {
     const { data: { user } } = await supabase.auth.getUser();
 
     const { error } = await supabase.from('notas_saida').update({
-      razao_social: editingNota.razao_social,
-      chave_acesso: editingNota.chave_acesso,
-      uf: editingNota.uf,
-      data_emissao: editingNota.data_emissao,
-      numero_nfe: editingNota.numero_nfe,
-      valor_nfe: editingNota.valor_nfe
+      razao_social: editingNota.razao_social, chave_acesso: editingNota.chave_acesso, uf: editingNota.uf,
+      data_emissao: editingNota.data_emissao, numero_nfe: editingNota.numero_nfe, valor_nfe: editingNota.valor_nfe
     }).eq('id', editingNota.id);
 
-    if (error) {
-      Swal.fire('Erro!', `Não foi possível atualizar: ${error.message}`, 'error');
-    } else {
-      await supabase.from('logs_auditoria').insert([{
-        usuario: user?.email || 'Sistema',
-        acao: 'Edição de Registo',
-        tabela: 'notas_saida',
-        registro_id: editingNota.id,
-        detalhes: `Dados da NF-e de Saída nº ${editingNota.numero_nfe} foram atualizados.`
-      }]);
-      
-      Swal.fire({
-        icon: 'success',
-        title: 'Atualizado!',
-        text: 'As alterações foram guardadas.',
-        timer: 1500,
-        showConfirmButton: false
-      });
-      
+    if (error) Swal.fire('Erro!', `Não foi possível atualizar: ${error.message}`, 'error');
+    else {
+      await supabase.from('logs_auditoria').insert([{ usuario: user?.email || 'Sistema', acao: 'Edição de Registo', tabela: 'notas_saida', registro_id: editingNota.id, detalhes: `Dados da NF-e nº ${editingNota.numero_nfe} atualizados.` }]);
+      Swal.fire({ icon: 'success', title: 'Atualizado!', text: 'As alterações foram guardadas.', timer: 1500, showConfirmButton: false });
       setEditingNota(null);
-      executarBusca(searchTerm, dataInicio, dataFim, false);
+      executarBusca();
     }
     setEditLoading(false);
   };
 
-  const formatarCNPJ = (cnpj: string) => {
-    if (cnpj.length !== 14) return cnpj;
-    return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
-  };
-
-  const formatarData = (dataStr: string) => {
-    if (!dataStr) return '-';
-    const [ano, mes, dia] = dataStr.split('-');
-    return `${dia}/${mes}/${ano}`;
-  };
-
-  const formatarMoeda = (valor: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
-  };
+  const formatarCNPJ = (cnpj: string) => cnpj.length !== 14 ? cnpj : cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+  const formatarData = (dataStr: string) => { if (!dataStr) return '-'; const [ano, mes, dia] = dataStr.split('-'); return `${dia}/${mes}/${ano}`; };
+  const formatarMoeda = (valor: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
 
   return (
     <div className="premium-card">
-      <div className="card-header" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: '1rem' }}>
+      <div className="card-header" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <h2>Histórico de Notas de Saída</h2>
+        
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={exportarPDF} disabled={exportLoading} className="btn btn-sm" style={{ backgroundColor: '#ef4444', color: 'white', fontWeight: 'bold' }}>
+            {exportLoading ? 'A Gerar...' : '📄 PDF'}
+          </button>
+          <button onClick={exportarXML} disabled={exportLoading} className="btn btn-sm" style={{ backgroundColor: '#f59e0b', color: 'white', fontWeight: 'bold' }}>
+            {exportLoading ? 'A Gerar...' : '📝 XML'}
+          </button>
+          <button onClick={exportarExcel} disabled={exportLoading} className="btn btn-sm" style={{ backgroundColor: '#10b981', color: 'white', fontWeight: 'bold' }}>
+            {exportLoading ? 'A Gerar...' : '📊 Excel'}
+          </button>
+        </div>
       </div>
 
       <div style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: 'var(--radius-md)', marginBottom: '2rem', border: '1px solid var(--border-color)' }}>
         <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div style={{ flex: '1 1 300px' }}>
-            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>
-              Busca (Cliente, CNPJ ou Nº NF-e)
-            </label>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>Busca (Cliente, CNPJ ou Nº NF-e)</label>
             <input type="text" className="input-field" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Ex: Viapro, 48.673..." />
           </div>
           <div style={{ flex: '1 1 150px' }}>
-            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>
-              Emissão (De)
-            </label>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>Emissão (De)</label>
             <input type="date" className="input-field" value={dataInicio} onChange={e => setDataInicio(e.target.value)} />
           </div>
           <div style={{ flex: '1 1 150px' }}>
-            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>
-              Emissão (Até)
-            </label>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--viapro-blue)', marginBottom: '0.5rem' }}>Emissão (Até)</label>
             <input type="date" className="input-field" value={dataFim} onChange={e => setDataFim(e.target.value)} />
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button onClick={() => executarBusca(searchTerm, dataInicio, dataFim, true)} className="btn btn-primary" style={{ padding: '0.65rem 1.5rem' }}>🔍 Filtrar</button>
+            <button onClick={() => executarBusca()} className="btn btn-primary" style={{ padding: '0.65rem 1.5rem' }}>🔍 Filtrar</button>
             <button onClick={limparFiltros} className="btn btn-logout" style={{ padding: '0.65rem 1.5rem' }}>Limpar</button>
           </div>
         </div>
@@ -201,15 +247,17 @@ export function ListaNotasSaida() {
 
       {error && <div className="status-msg status-error">Erro: {error}</div>}
 
-      {loading && notas.length === 0 ? (
-        <p style={{ color: 'var(--text-muted)' }}>A procurar dados paginados no servidor...</p>
+      {loading ? (
+        <p style={{ color: 'var(--text-muted)' }}>A procurar dados no servidor...</p>
       ) : (
-        <div className="table-container">
+        <div className="table-container" style={{ maxHeight: '600px', overflowY: 'auto' }}>
           <table className="custom-table">
-            <thead>
+            {/* CORREÇÃO DO CABEÇALHO FLUTUANTE */}
+            <thead style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#ffffff', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
               <tr>
                 <th>Nº NF-e</th>
                 <th>Cliente (Razão / CNPJ)</th>
+                <th>Chave de Acesso</th>
                 <th>Emissão</th>
                 <th>Anexo</th>
                 <th>Valor Total</th>
@@ -220,22 +268,15 @@ export function ListaNotasSaida() {
               {notas.length > 0 ? notas.map((nota) => (
                 <tr key={nota.id}>
                   <td style={{ fontWeight: '600' }}>{nota.numero_nfe}</td>
+                  <td><strong style={{ color: 'var(--text-main)' }}>{nota.razao_social}</strong><br /><span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{formatarCNPJ(nota.cnpj)} ({nota.uf})</span></td>
                   <td>
-                    <strong style={{ color: 'var(--text-main)' }}>{nota.razao_social}</strong>
-                    <br />
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                      {formatarCNPJ(nota.cnpj)} ({nota.uf})
-                    </span>
+                    <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--text-muted)', wordBreak: 'break-all', maxWidth: '160px' }}>
+                      {nota.chave_acesso}
+                    </div>
                   </td>
                   <td>{formatarData(nota.data_emissao)}</td>
-                  <td>
-                    {nota.arquivo_url ? (
-                      <a href={nota.arquivo_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-primary" style={{padding: '2px 8px', fontSize: '0.75rem'}}>👁 Ver</a>
-                    ) : <span style={{color: '#ccc', fontSize: '0.85rem'}}>Nenhum</span>}
-                  </td>
-                  <td style={{ color: 'var(--viapro-green)', fontWeight: '700' }}>
-                    {formatarMoeda(nota.valor_nfe)}
-                  </td>
+                  <td>{nota.arquivo_url ? <a href={nota.arquivo_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-primary" style={{padding: '2px 8px', fontSize: '0.75rem'}}>👁 Ver</a> : <span style={{color: '#ccc', fontSize: '0.85rem'}}>Nenhum</span>}</td>
+                  <td style={{ color: 'var(--viapro-green)', fontWeight: '700' }}>{formatarMoeda(nota.valor_nfe)}</td>
                   <td style={{ textAlign: 'right' }}>
                     <div className="table-actions" style={{ justifyContent: 'flex-end' }}>
                       <button onClick={() => setEditingNota(nota)} className="btn btn-sm btn-warning">Editar</button>
@@ -243,21 +284,9 @@ export function ListaNotasSaida() {
                     </div>
                   </td>
                 </tr>
-              )) : (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                    Nenhuma nota de saída encontrada para estes filtros.
-                  </td>
-                </tr>
-              )}
+              )) : (<tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Nenhuma nota de saída encontrada para estes filtros.</td></tr>)}
             </tbody>
           </table>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <button disabled={pagina === 0} onClick={() => setPagina(prev => prev - 1)} className="btn btn-logout btn-sm">◀ Página Anterior</button>
-            <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-muted)' }}>Página {pagina + 1}</span>
-            <button disabled={!temMais} onClick={() => setPagina(prev => prev + 1)} className="btn btn-logout btn-sm">Próxima Página ▶</button>
-          </div>
         </div>
       )}
 
