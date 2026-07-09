@@ -82,7 +82,7 @@ export function ListaImpostos() {
     setFiltroAno('');
     setFiltroSituacao('Todos');
     setImpostosFiltrados(impostos);
-    aplicarFiltrosLocais(impostos, '', 'Todos');
+    setAcumulado({ faturamento: 0, compras: 0, porcentagem_evento380: 0 });
   };
 
   useEffect(() => {
@@ -140,7 +140,11 @@ export function ListaImpostos() {
       });
 
       doc.save(`Planilha_Impostos_Filtrados_${Date.now()}.pdf`);
-    } finally { setExportLoading(false); }
+    } catch (err) {
+      Swal.fire('Erro', 'Não foi possível gerar o PDF', 'error');
+    } finally {
+      setExportLoading(false);
+    }
   };
 
   const exportarExcel = async () => {
@@ -162,7 +166,11 @@ export function ListaImpostos() {
       const link = document.createElement("a");
       link.href = url; link.download = `Planilha_Impostos_Filtrados_${Date.now()}.csv`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
-    } finally { setExportLoading(false); }
+    } catch (err) {
+      Swal.fire('Erro', 'Não foi possível gerar o Excel', 'error');
+    } finally {
+      setExportLoading(false);
+    }
   };
 
   return (

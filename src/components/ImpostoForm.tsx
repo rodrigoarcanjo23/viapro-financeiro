@@ -66,12 +66,10 @@ export function ImpostoForm() {
         faturamento: totalFat,
         compras: totalComp,
         porcentagem_evento380: pctGlobal,
-        ano_detectado: CampanhaAno(ano)
+        ano_detectado: ano
       });
     }
   };
-
-  const CampanhaAno = (anoStr: string) => anoStr;
 
   useEffect(() => {
     const ano = formData.mes_apuracao ? formData.mes_apuracao.split('-')[0] : new Date().getFullYear().toString();
@@ -152,7 +150,7 @@ export function ImpostoForm() {
       urlArquivoFinal = publicUrlData.publicUrl;
     }
 
-    const { error } = await supabase
+    const { data: impostoData, error } = await supabase
       .from('impostos')
       .insert([{
         mes_apuracao: formData.mes_apuracao,
@@ -180,11 +178,20 @@ export function ImpostoForm() {
         ipi: calculo.ipi || 0,
         situacao: formData.situacao,
         arquivo_url: urlArquivoFinal
-      }]);
+      }]).select('id').single();
 
     if (error) {
       Swal.fire('Erro ao Salvar', error.message, 'error');
     } else {
+      // VARIÁVEL 'user' AGORA ESTÁ SENDO LIBA E CONVALIDADA DIRETAMENTE AQUI
+      await supabase.from('logs_auditoria').insert([{
+        usuario: user?.email || 'Sistema', 
+        acao: 'Criação de Registro', 
+        tabela: 'impostos',
+        registro_id: impostoData?.id,
+        detalhes: `Apuração salva baseada na estrutura mestre do Excel para o mês ${formData.mes_apuracao}`
+      }]);
+
       Swal.fire('Sucesso!', 'Dados fiscais gravados com sucesso.', 'success');
       const anoAtual = formData.mes_apuracao ? formData.mes_apuracao.split('-')[0] : new Date().getFullYear().toString();
       await buscarAcumuladoAno(anoAtual);
@@ -268,7 +275,6 @@ export function ImpostoForm() {
               Processamento & Indústria
             </h3>
 
-            {/* CORREÇÃO DO TYPO: REALIZADA A TROCA EM MASSA DE justifyWith PARA justifyContent */}
             <div style={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 'var(--radius-md)', padding: '1.2rem', fontSize: '0.85rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.4rem', marginBottom: '0.4rem', borderBottom: '1px solid #e2e8f0' }}>
                 <span style={{ fontWeight: 'bold' }}>Evento 380 - Porcentagem (%):</span>
