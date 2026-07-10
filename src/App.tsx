@@ -13,13 +13,15 @@ import { ListaFaturamento } from './components/ListaFaturamento';
 import { ImpostoForm } from './components/ImpostoForm';
 import { ListaImpostos } from './components/ListaImpostos';
 import { GestaoEquipe } from './components/GestaoEquipe';
+import { ListaAuditoria } from './components/ListaAuditoria'; // Nova importação
 import type { Session } from '@supabase/supabase-js';
 import logoViapro from './assets/logo.png';
 import './App.css';
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'entradas' | 'saidas' | 'cte' | 'faturamento' | 'impostos' | 'equipe'>('dashboard');
+  // Adicionado o estado 'auditoria'
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'entradas' | 'saidas' | 'cte' | 'faturamento' | 'impostos' | 'equipe' | 'auditoria'>('dashboard');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -61,7 +63,7 @@ function App() {
       
       <main>
         {/* Sistema de Abas */}
-        <div className="tabs-container" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div className="tabs-container" style={{ flexWrap: 'wrap', gap: '0.5rem', display: 'flex' }}>
           <button className={`tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             Visão Geral
           </button>
@@ -80,9 +82,16 @@ function App() {
           <button className={`tab-btn ${activeTab === 'impostos' ? 'active' : ''}`} onClick={() => setActiveTab('impostos')}>
             Impostos (DAS/Retenções)
           </button>
-          <button className={`tab-btn ${activeTab === 'equipe' ? 'active' : ''}`} onClick={() => setActiveTab('equipe')} style={{ marginLeft: 'auto', borderBottom: '2px solid transparent' }}>
-            ⚙️ Equipe e Acessos
-          </button>
+          
+          {/* Menu Administrativo alinhado à direita */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+            <button className={`tab-btn ${activeTab === 'auditoria' ? 'active' : ''}`} onClick={() => setActiveTab('auditoria')} style={{ borderBottom: '2px solid transparent' }}>
+              🛡️ Auditoria
+            </button>
+            <button className={`tab-btn ${activeTab === 'equipe' ? 'active' : ''}`} onClick={() => setActiveTab('equipe')} style={{ borderBottom: '2px solid transparent' }}>
+              ⚙️ Equipe e Acessos
+            </button>
+          </div>
         </div>
 
         {/* Renderização Condicional */}
@@ -107,6 +116,8 @@ function App() {
         {activeTab === 'impostos' && (
           <><ImpostoForm /><ListaImpostos /></>
         )}
+
+        {activeTab === 'auditoria' && <ListaAuditoria />}
 
         {activeTab === 'equipe' && <GestaoEquipe />}
       </main>
