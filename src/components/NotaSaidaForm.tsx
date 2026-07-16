@@ -13,6 +13,7 @@ export function NotaSaidaForm() {
   const [fileName, setFileName] = useState('');
   const [gerarFaturamento, setGerarFaturamento] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [xmlLoading, setXmlLoading] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -24,11 +25,65 @@ export function NotaSaidaForm() {
     if (anexoInputRef.current) anexoInputRef.current.value = '';
   };
 
+  // MÁGICA DE IMPORTAÇÃO DE XML (NOTA DE SAÍDA)
+  const handleImportarXML = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const arquivo = e.target.files?.[0];
+    if (!arquivo) return;
+    setXmlLoading(true);
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const xmlText = event.target?.result as string;
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+
+        // Dados do Cliente (Destinatário)
+        const dest = xmlDoc.getElementsByTagName("dest")[0];
+        const cnpj = dest?.getElementsByTagName("CNPJ")[0]?.textContent || dest?.getElementsByTagName("CPF")[0]?.textContent || "";
+        const razao = dest?.getElementsByTagName("xNome")[0]?.textContent || "";
+        const enderDest = dest?.getElementsByTagName("enderDest")[0];
+        const uf = enderDest?.getElementsByTagName("UF")[0]?.textContent || "";
+
+        // Dados da Nota
+        const numero = xmlDoc.getElementsByTagName("nNF")[0]?.textContent || "";
+        const valor = xmlDoc.getElementsByTagName("vNF")[0]?.textContent || "";
+        
+        let chave = xmlDoc.getElementsByTagName("chNFe")[0]?.textContent || "";
+        if (!chave) {
+          const infNFe = xmlDoc.getElementsByTagName("infNFe")[0];
+          chave = infNFe?.getAttribute("Id")?.replace("NFe", "") || "";
+        }
+
+        let emissao = xmlDoc.getElementsByTagName("dhEmi")[0]?.textContent || xmlDoc.getElementsByTagName("dEmi")[0]?.textContent || "";
+        if (emissao) emissao = emissao.substring(0, 10);
+
+        setFormData({
+          ...formData,
+          cnpj,
+          razao_social: razao,
+          chave_acesso: chave,
+          uf,
+          numero_nfe: numero,
+          data_emissao: emissao,
+          valor_nfe: parseFloat(valor).toFixed(2)
+        });
+
+        Swal.fire('XML Processado!', 'Os dados da Nota de Saída foram preenchidos.', 'success');
+      } catch (err) {
+        Swal.fire('Erro no XML', 'Falha ao ler a estrutura do arquivo. Verifique o documento.', 'error');
+      } finally {
+        setXmlLoading(false);
+      }
+    };
+    reader.readAsText(arquivo);
+    e.target.value = ''; 
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    // VERIFICAÇÃO ANTI-DUPLICIDADE
     const { data: notaDuplicada } = await supabase
       .from('notas_saida')
       .select('id')
@@ -100,8 +155,14 @@ export function NotaSaidaForm() {
 
   return (
     <div className="premium-card">
-      <div className="card-header">
+      <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
         <h2>Registro de Nota de Saída (Faturamento)</h2>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <label className="btn btn-primary" style={{ fontSize: '0.85rem', gap: '0.5rem', cursor: 'pointer' }}>
+            {xmlLoading ? 'Lendo...' : '📁 Importar XML da Nota'}
+            <input type="file" accept=".xml" style={{ display: 'none' }} onChange={handleImportarXML} />
+          </label>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit}>

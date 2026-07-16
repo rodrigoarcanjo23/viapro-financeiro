@@ -13,6 +13,7 @@ export function CteForm() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [xmlLoading, setXmlLoading] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -24,11 +25,73 @@ export function CteForm() {
     if (anexoInputRef.current) anexoInputRef.current.value = '';
   };
 
+  // MÁGICA DE IMPORTAÇÃO DE XML (CT-E)
+  const handleImportarXML = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const arquivo = e.target.files?.[0];
+    if (!arquivo) return;
+    setXmlLoading(true);
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const xmlText = event.target?.result as string;
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+
+        // Dados da Transportadora (Emitente)
+        const emit = xmlDoc.getElementsByTagName("emit")[0];
+        const razao = emit?.getElementsByTagName("xNome")[0]?.textContent || "";
+        const cgf = emit?.getElementsByTagName("IE")[0]?.textContent || "";
+
+        // Dados do CT-e
+        const ide = xmlDoc.getElementsByTagName("ide")[0];
+        const numero = ide?.getElementsByTagName("nCT")[0]?.textContent || "";
+        let emissao = ide?.getElementsByTagName("dhEmi")[0]?.textContent || "";
+        if (emissao) emissao = emissao.substring(0, 10);
+
+        // Valores
+        const vPrest = xmlDoc.getElementsByTagName("vPrest")[0];
+        const valorServico = vPrest?.getElementsByTagName("vTPrest")[0]?.textContent || "";
+
+        // Impostos (O CT-e pode ter tags de ICMS variadas, ex: ICMS00, ICMS20)
+        const imp = xmlDoc.getElementsByTagName("imp")[0];
+        const vBC = imp?.getElementsByTagName("vBC")[0]?.textContent || "0";
+        const vICMS = imp?.getElementsByTagName("vICMS")[0]?.textContent || "0";
+
+        // Chave de Acesso
+        let chave = xmlDoc.getElementsByTagName("chCTe")[0]?.textContent || "";
+        if (!chave) {
+          const infCte = xmlDoc.getElementsByTagName("infCte")[0];
+          chave = infCte?.getAttribute("Id")?.replace("CTe", "") || "";
+        }
+
+        setFormData({
+          ...formData,
+          chave_acesso: chave,
+          numero_documento: numero,
+          cgf_emitente: cgf,
+          razao_social_emitente: razao,
+          data_emissao: emissao,
+          valor_total_servico: parseFloat(valorServico).toFixed(2),
+          base_calculo_icms: parseFloat(vBC).toFixed(2),
+          icms_destacado: parseFloat(vICMS).toFixed(2)
+        });
+
+        Swal.fire('XML Processado!', 'Os dados do Conhecimento de Transporte foram preenchidos.', 'success');
+      } catch (err) {
+        Swal.fire('Erro no XML', 'Falha ao ler a estrutura do CT-e. O arquivo pode ser inválido.', 'error');
+      } finally {
+        setXmlLoading(false);
+      }
+    };
+    reader.readAsText(arquivo);
+    e.target.value = ''; 
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    // VERIFICAÇÃO ANTI-DUPLICIDADE
     const { data: cteDuplicado } = await supabase
       .from('cte')
       .select('id')
@@ -90,8 +153,14 @@ export function CteForm() {
 
   return (
     <div className="premium-card">
-      <div className="card-header">
+      <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
         <h2>Registro de CTE (Conhecimento de Transporte Eletrônico)</h2>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <label className="btn btn-primary" style={{ fontSize: '0.85rem', gap: '0.5rem', cursor: 'pointer' }}>
+            {xmlLoading ? 'Lendo...' : '📁 Importar XML do CTE'}
+            <input type="file" accept=".xml" style={{ display: 'none' }} onChange={handleImportarXML} />
+          </label>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit}>
